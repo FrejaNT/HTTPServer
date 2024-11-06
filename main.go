@@ -6,8 +6,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
-	"sync"
 )
 
 type RequestType int64
@@ -22,7 +20,7 @@ const (
 const maxRoutines = 10
 
 func main() {
-	var wg sync.WaitGroup
+
 	ch := make(chan int, maxRoutines)
 
 	//listening
@@ -46,10 +44,9 @@ func main() {
 		if er != nil {
 			fmt.Printf("error starting connection: %s\n", er)
 		}
-		wg.Add(1)
 		ch <- 1
 		go func() {
-			defer func() { wg.Done(); <-ch }()
+			defer func() { <-ch }()
 			parseRequest(cn)
 		}()
 	}
@@ -60,11 +57,15 @@ func parseRequest(cn net.Conn) {
 	// parse request
 
 	bf := bufio.NewReader(cn)
-	rq, er := bf.ReadString('\n')
+
+	// Parse the HTTP request using http.ReadRequest
+	rq, er := http.ReadRequest(bf)
 	if er != nil {
-		fmt.Printf("error writing response: %s\n", er)
+		// If there's an error reading the request, send a 400 Bad Request response
+		sendBadRequestResponse(cn, "Bad Request")
 		return
 	}
+
 	rType := checkRequestType(rq)
 
 	switch rType {
@@ -79,15 +80,9 @@ func parseRequest(cn net.Conn) {
 	}
 }
 
-func checkRequestType(rq string) RequestType {
-	parts := strings.Fields(rq)
-	if len(parts) != 3 {
-		return BAD
-	}
-
-	method, path, proto := parts[0], parts[1], parts[2]
-
-	if !strings.HasPrefix(path, "/") || proto != "HTTP/1.0" && proto != "HTTP/1.1" {
+func checkRequestType(rq *http.Request) RequestType {
+	method, proto := rq.Method, rq.Proto
+	if proto != "HTTP/1.0" && proto != "HTTP/1.1" {
 		return BAD
 	}
 
@@ -141,13 +136,3 @@ func sendNotImplementedResponse(cn net.Conn) {
 		return
 	}
 }
-
-/* 	// Wrap the connection in a bufio.Reader
-reader := bufio.NewReader(c)
-
-// Parse the HTTP request using http.ReadRequest
-req, err := http.ReadRequest(reader)
-if err != nil {
-	// If there's an error reading the request, send a 400 Bad Request response
-	sendBadRequestResponse(c)
-	return */
