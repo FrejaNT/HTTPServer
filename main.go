@@ -3,24 +3,18 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
-)
-
-type RequestType int64
-
-const (
-	BAD  RequestType = 0
-	NYI  RequestType = 1
-	GET  RequestType = 2
-	POST RequestType = 3
+	"strings"
 )
 
 const maxRoutines = 10
 
+// TODO: concurrency, errors and i'm lost also ports and stuff
 func main() {
-
 	ch := make(chan int, maxRoutines)
 
 	//listening
@@ -40,8 +34,8 @@ func main() {
 
 	// connections
 	for {
-		cn, er := ls.Accept()
-		if er != nil {
+		cn, err := ls.Accept()
+		if err != nil {
 			fmt.Printf("error starting connection: %s\n", er)
 		}
 		ch <- 1
@@ -59,80 +53,102 @@ func parseRequest(cn net.Conn) {
 	bf := bufio.NewReader(cn)
 
 	// Parse the HTTP request using http.ReadRequest
-	rq, er := http.ReadRequest(bf)
-	if er != nil {
+	rq, err := http.ReadRequest(bf)
+
+	if err != nil {
 		// If there's an error reading the request, send a 400 Bad Request response
-		sendBadRequestResponse(cn, "Bad Request")
+		SendBadRequestResponse(cn, "Error parsing HTTP request")
 		return
 	}
 
-	rType := checkRequestType(rq)
+	md, pr := rq.Method, rq.Proto
 
-	switch rType {
-	case GET:
-		HandleGetRequest(cn, bf)
-	case POST:
-		HandlePostRequest(cn, bf)
-	case NYI:
-		sendNotImplementedResponse(cn)
-	case BAD:
-		sendBadRequestResponse(cn, "goof")
-	}
-}
-
-func checkRequestType(rq *http.Request) RequestType {
-	method, proto := rq.Method, rq.Proto
-	if proto != "HTTP/1.0" && proto != "HTTP/1.1" {
-		return BAD
+	if pr != "HTTP/1.0" && pr != "HTTP/1.1" {
+		SendBadRequestResponse(cn, "Invalid HTTP version")
+		return
 	}
 
-	switch method {
+	switch md {
 	case "GET":
-		return GET
+		bd, err := handleGetRequest(rq)
+		if err != nil {
+			SendBadRequestResponse(cn, err.Error())
+			return
+		}
+		SendOkResponseWithBody(cn, bd)
+
 	case "POST":
-		return POST
-	case "PUT":
-		return NYI
-	case "DELETE":
-		return NYI
-	case "PATCH":
-		return NYI
-	}
+		if err := handlePostRequest(rq); err != nil {
+			SendBadRequestResponse(cn, err.Error())
+			return
+		}
+		SendOkResponse(cn)
 
-	return BAD
+	case "PUT", "DELETE", "PATCH":
+		SendNotImplementedResponse(cn)
+
+	default:
+		SendBadRequestResponse(cn, "Invalid HTTP method")
+	}
 }
 
-func sendBadRequestResponse(cn net.Conn, message string) {
-	res := http.Response{
-		Status:        "400 Bad Request",
-		StatusCode:    http.StatusBadRequest,
-		Proto:         "HTTP/1.1",
-		ProtoMajor:    1,
-		ProtoMinor:    1,
-		Header:        make(http.Header),
-		ContentLength: int64(len(message)),
-		Body:          nil,
+// TODO: errors etc
+func handleGetRequest(rq *http.Request) ([]byte, error) {
+	fn, _ := strings.CutPrefix(rq.URL.Path, "/")
+
+	bd, err := os.ReadFile(fn)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := res.Write(cn); err != nil {
-		fmt.Printf("error writing bad request response: %s\n", err)
-		return
-	}
-	cn.Write([]byte(message))
+	// create response
+	return bd, nil
 }
 
-func sendNotImplementedResponse(cn net.Conn) {
-	res := http.Response{
-		Status:     "501 Not Implemented",
-		StatusCode: http.StatusNotImplemented,
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Header:     make(http.Header),
+// TODO: probably not good
+func handlePostRequest(rq *http.Request) error {
+	rq.ParseMultipartForm(10 << 20)
+	var key string
+	for key_ := range rq.MultipartForm.File { //ugly
+		key = key_
 	}
 
-	if err := res.Write(cn); err != nil {
-		fmt.Printf("error writing bad request response: %s\n", err)
-		return
+	fi, ha, err := rq.FormFile(key)
+	if err != nil {
+		return err
 	}
+	defer fi.Close()
+
+	if err := checkContentType(ha.Header.Get("Content-Type")); err != nil {
+		return err
+	}
+
+	if err := saveToFile(fi, ha.Filename); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func checkContentType(ct string) error {
+	switch ct {
+	case "text/html", "text/plain", "image/gif", "image/jpeg", "image/jpg", "text/css":
+		return nil
+	default:
+		return fmt.Errorf("invalid content type")
+	}
+
+}
+
+// Function to save data to a file
+func saveToFile(fi multipart.File, fn string) error {
+	ds, err := os.Create(fn)
+	if err != nil {
+		return err
+	}
+	defer ds.Close()
+	if _, err := io.Copy(ds, fi); err != nil {
+		return err
+	}
+	return nil
 }
