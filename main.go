@@ -26,7 +26,7 @@ func main() {
 	args := os.Args[1:]
 
 	//listening
-	ls, er := net.Listen("tcp", "localhost:"+args[0])
+	ls, er := net.Listen("tcp", "0.0.0.0:"+args[0])
 	if er != nil {
 		fmt.Printf("error starting server: %s\n", er)
 		os.Exit(1)
