@@ -14,11 +14,19 @@ import (
 const maxRoutines = 10
 
 // TODO: concurrency, errors and i'm lost also ports and stuff
+
+/*
+Questions: concurrency, errors, queries/params, HTTP versions, content-types, file name(key thing),
+
+	sending files with curl, what are we allowed to use in net/http
+*/
 func main() {
 	ch := make(chan int, maxRoutines)
 
+	args := os.Args[1:]
+
 	//listening
-	ls, er := net.Listen("tcp", "localhost:3333")
+	ls, er := net.Listen("tcp", "localhost:"+args[0])
 	if er != nil {
 		fmt.Printf("error starting server: %s\n", er)
 		os.Exit(1)
@@ -105,8 +113,22 @@ func handleGetRequest(rq *http.Request) ([]byte, error) {
 	return bd, nil
 }
 
-// TODO: probably not good
 func handlePostRequest(rq *http.Request) error {
+	if rq.Header.Get("Content-Type") == "multipart/form-data" {
+		return handlePostRequestMultiForm(rq)
+	}
+	if err := checkContentType(rq.Header.Get("Content-Type")); err != nil {
+		return err
+	}
+	if err := saveToFile(rq.Body, rq.Header.Get("filename")); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// TODO: probably not good
+func handlePostRequestMultiForm(rq *http.Request) error {
 	rq.ParseMultipartForm(10 << 20)
 	var key string
 	for key_ := range rq.MultipartForm.File { //ugly
@@ -123,7 +145,7 @@ func handlePostRequest(rq *http.Request) error {
 		return err
 	}
 
-	if err := saveToFile(fi, ha.Filename); err != nil {
+	if err := saveToFileMultiForm(fi, ha.Filename); err != nil {
 		return err
 	}
 
@@ -141,13 +163,24 @@ func checkContentType(ct string) error {
 }
 
 // Function to save data to a file
-func saveToFile(fi multipart.File, fn string) error {
+func saveToFileMultiForm(fi multipart.File, fn string) error {
 	ds, err := os.Create(fn)
 	if err != nil {
 		return err
 	}
 	defer ds.Close()
 	if _, err := io.Copy(ds, fi); err != nil {
+		return err
+	}
+	return nil
+}
+func saveToFile(bd io.ReadCloser, fn string) error {
+	ds, err := os.Create(fn)
+	if err != nil {
+		return err
+	}
+	defer ds.Close()
+	if _, err := io.Copy(ds, bd); err != nil {
 		return err
 	}
 	return nil
