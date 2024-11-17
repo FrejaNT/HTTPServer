@@ -2,31 +2,33 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 )
 
+// max number of routines allowed
 const maxRoutines = 10
 
-// TODO: concurrency, errors and i'm lost also ports and stuff
-
-/*
-Questions: concurrency, errors, queries/params, HTTP versions, content-types, file name(key thing),
-
-	sending files with curl, what are we allowed to use in net/http
-*/
 func main() {
-	ch := make(chan int, maxRoutines)
 
 	args := os.Args[1:]
 
+	// second argument is ip if it exists otherwise listens on all interfaces
+	var ip string
+	if len(args) > 1 {
+		ip = args[1]
+	} else {
+		ip = "0.0.0.0"
+	}
+
 	//listening
-	ls, er := net.Listen("tcp", "0.0.0.0:"+args[0])
+	ls, er := net.Listen("tcp", ip+":"+args[0])
 	if er != nil {
 		fmt.Printf("error starting server: %s\n", er)
 		os.Exit(1)
@@ -40,6 +42,9 @@ func main() {
 	}
 	fmt.Printf("Listening on host: %s, port: %s\n", host, port)
 
+	// Channel for limiting number of routines
+	ch := make(chan int, maxRoutines)
+
 	// connections
 	for {
 		cn, err := ls.Accept()
@@ -51,20 +56,18 @@ func main() {
 			defer func() { <-ch }()
 			parseRequest(cn)
 		}()
+
 	}
 }
 
 func parseRequest(cn net.Conn) {
 	defer cn.Close()
+
 	// parse request
-
 	bf := bufio.NewReader(cn)
-
-	// Parse the HTTP request using http.ReadRequest
 	rq, err := http.ReadRequest(bf)
 
 	if err != nil {
-		// If there's an error reading the request, send a 400 Bad Request response
 		SendBadRequestResponse(cn, "Error parsing HTTP request")
 		return
 	}
@@ -79,7 +82,12 @@ func parseRequest(cn net.Conn) {
 	switch md {
 	case "GET":
 		bd, err := handleGetRequest(rq)
+
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				SendFileNotFoundResponse(cn)
+				return
+			}
 			SendBadRequestResponse(cn, err.Error())
 			return
 		}
@@ -100,56 +108,102 @@ func parseRequest(cn net.Conn) {
 	}
 }
 
-// TODO: errors etc
 func handleGetRequest(rq *http.Request) ([]byte, error) {
-	fn, _ := strings.CutPrefix(rq.URL.Path, "/")
+	fn, err := getURLFileName(rq)
+	if err != nil {
+		return nil, err
+	}
 
 	bd, err := os.ReadFile(fn)
 	if err != nil {
 		return nil, err
 	}
 
-	// create response
 	return bd, nil
 }
 
 func handlePostRequest(rq *http.Request) error {
-	if rq.Header.Get("Content-Type") == "multipart/form-data" {
-		return handlePostRequestMultiForm(rq)
+	fn, err := getURLFileName(rq)
+
+	if err != nil {
+		return err
 	}
+
+	if strings.HasPrefix(rq.Header.Get("Content-Type"), "multipart/form-data") {
+		return handlePostRequestMultiForm(rq, fn)
+	}
+
+	// if there is a valid destination url
+	if fn != "" {
+		if err := saveToFile(rq.Body, fn); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// otherwise check headers for content-type/name
 	if err := checkContentType(rq.Header.Get("Content-Type")); err != nil {
 		return err
 	}
-	if err := saveToFile(rq.Body, rq.Header.Get("filename")); err != nil {
+
+	if err := saveToFile(rq.Body, rq.Header.Get("file")); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// TODO: probably not good
-func handlePostRequestMultiForm(rq *http.Request) error {
+func handlePostRequestMultiForm(rq *http.Request, fname string) error {
 	rq.ParseMultipartForm(10 << 20)
-	var key string
-	for key_ := range rq.MultipartForm.File { //ugly
-		key = key_
-	}
 
-	fi, ha, err := rq.FormFile(key)
+	//gives http: no such file when "file" key not used in request
+	//maybe give more explicit error?
+	fi, hd, err := rq.FormFile("file")
 	if err != nil {
 		return err
 	}
 	defer fi.Close()
 
-	if err := checkContentType(ha.Header.Get("Content-Type")); err != nil {
+	if err := checkContentType(hd.Header.Get("Content-Type")); err != nil {
 		return err
 	}
 
-	if err := saveToFileMultiForm(fi, ha.Filename); err != nil {
+	var fn string
+	if fname != "" {
+		fn = fname
+	} else {
+		fn = hd.Filename
+	}
+
+	if err := saveToFile(fi, fn); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func getURLFileName(rq *http.Request) (string, error) {
+	fn, _ := strings.CutPrefix(rq.URL.Path, "/")
+	if fn == "" {
+		return "", nil
+	}
+	ex := strings.Split(fn, ".")
+	if len(ex) != 2 {
+		return "", fmt.Errorf("invalid URL")
+	}
+	if err := checkExtension(ex[1]); err != nil {
+		return "", err
+	}
+	return fn, nil
+}
+
+func checkExtension(ex string) error {
+	switch ex {
+	case "html", "txt", "gif", "jpeg", "jpg", "css":
+		return nil
+	default:
+		return fmt.Errorf("invalid content type")
+	}
 }
 
 func checkContentType(ct string) error {
@@ -159,21 +213,8 @@ func checkContentType(ct string) error {
 	default:
 		return fmt.Errorf("invalid content type")
 	}
-
 }
 
-// Function to save data to a file
-func saveToFileMultiForm(fi multipart.File, fn string) error {
-	ds, err := os.Create(fn)
-	if err != nil {
-		return err
-	}
-	defer ds.Close()
-	if _, err := io.Copy(ds, fi); err != nil {
-		return err
-	}
-	return nil
-}
 func saveToFile(bd io.ReadCloser, fn string) error {
 	ds, err := os.Create(fn)
 	if err != nil {

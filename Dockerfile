@@ -7,8 +7,8 @@ RUN go mod download
 
 COPY *.go ./
 
-RUN go build -o /httpserver
+RUN go build -o /http_server
 
-EXPOSE 8080
+EXPOSE 3333
 
-CMD [ "/httpserver" ]
+CMD [ "/http_server" ]

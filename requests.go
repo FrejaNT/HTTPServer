@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 )
 
 func SendBadRequestResponse(cn net.Conn, message string) {
-	res := http.Response{
+	body := io.NopCloser(strings.NewReader(message))
+	rs := http.Response{
 		Status:        "400 Bad Request",
 		StatusCode:    http.StatusBadRequest,
 		Proto:         "HTTP/1.1",
@@ -15,18 +19,24 @@ func SendBadRequestResponse(cn net.Conn, message string) {
 		ProtoMinor:    1,
 		Header:        make(http.Header),
 		ContentLength: int64(len(message)),
-		Body:          nil,
+		Body:          body,
 	}
 
-	if err := res.Write(cn); err != nil {
+	rs.Header.Add("Connection", "close")
+	rs.Header.Add("Content-Type", "text/plain")
+
+	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing bad request response: %s\n", err)
-		return
 	}
-	cn.Write([]byte(message))
+	// client get curl 56 error when bad request on curl -F request specifically
+	// this fixes it, no idea why
+	if tcpConn, ok := cn.(*net.TCPConn); ok {
+		tcpConn.CloseWrite()
+	}
 }
 
 func SendNotImplementedResponse(cn net.Conn) {
-	res := http.Response{
+	rs := http.Response{
 		Status:     "501 Not Implemented",
 		StatusCode: http.StatusNotImplemented,
 		Proto:      "HTTP/1.1",
@@ -35,14 +45,15 @@ func SendNotImplementedResponse(cn net.Conn) {
 		Header:     make(http.Header),
 	}
 
-	if err := res.Write(cn); err != nil {
+	rs.Header.Add("Connection", "close")
+
+	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing bad request response: %s\n", err)
-		return
 	}
 }
 
 func SendOkResponse(cn net.Conn) {
-	res := http.Response{
+	rs := http.Response{
 		Status:        "200 OK",
 		StatusCode:    http.StatusOK,
 		Proto:         "HTTP/1.1",
@@ -53,16 +64,17 @@ func SendOkResponse(cn net.Conn) {
 		Body:          nil,
 	}
 
-	res.Header.Set("Content-Type", "text/plain")
+	rs.Header.Add("Connection", "close")
 
-	if err := res.Write(cn); err != nil {
+	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing response: %s\n", err)
 		return
 	}
 }
 
 func SendOkResponseWithBody(cn net.Conn, bd []byte) {
-	res := http.Response{
+	body := io.NopCloser(bytes.NewReader(bd))
+	rs := http.Response{
 		Status:        "200 OK",
 		StatusCode:    http.StatusOK,
 		Proto:         "HTTP/1.1",
@@ -70,14 +82,32 @@ func SendOkResponseWithBody(cn net.Conn, bd []byte) {
 		ProtoMinor:    1,
 		Header:        make(http.Header),
 		ContentLength: int64(len(bd)),
-		Body:          nil,
+		Body:          body,
 	}
 
-	res.Header.Set("Content-Type", "text/plain")
+	rs.Header.Add("Connection", "close")
 
-	if err := res.Write(cn); err != nil {
+	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing response: %s\n", err)
 		return
 	}
-	cn.Write(bd)
+}
+func SendFileNotFoundResponse(cn net.Conn) {
+	rs := http.Response{
+		Status:        "404 Not Found",
+		StatusCode:    http.StatusNotFound,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        make(http.Header),
+		ContentLength: 0,
+		Body:          nil,
+	}
+
+	rs.Header.Add("Connection", "close")
+
+	if err := rs.Write(cn); err != nil {
+		fmt.Printf("error writing response: %s\n", err)
+		return
+	}
 }
