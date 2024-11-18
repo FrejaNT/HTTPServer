@@ -71,7 +71,7 @@ func SendOkResponse(cn net.Conn) {
 	}
 }
 
-func SendOkResponseWithBody(cn net.Conn, bd []byte) {
+func SendOkResponseWithBody(cn net.Conn, bd []byte, ext string) {
 	body := io.NopCloser(bytes.NewReader(bd))
 	rs := http.Response{
 		Status:        "200 OK",
@@ -85,6 +85,7 @@ func SendOkResponseWithBody(cn net.Conn, bd []byte) {
 	}
 
 	rs.Header.Add("Connection", "close")
+	rs.Header.Add("Content-Type", ext)
 
 	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing response: %s\n", err)
