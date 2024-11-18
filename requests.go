@@ -28,8 +28,7 @@ func SendBadRequestResponse(cn net.Conn, message string) {
 	if err := rs.Write(cn); err != nil {
 		fmt.Printf("error writing bad request response: %s\n", err)
 	}
-	// client get curl 56 error when bad request on curl -F request specifically
-	// this fixes it, no idea why
+
 	if tcpConn, ok := cn.(*net.TCPConn); ok {
 		tcpConn.CloseWrite()
 	}

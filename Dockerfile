@@ -9,6 +9,4 @@ COPY *.go ./
 
 RUN go build -o /http_server
 
-EXPOSE 3333
-
 CMD [ "/http_server" ]

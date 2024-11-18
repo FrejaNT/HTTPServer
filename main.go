@@ -12,12 +12,22 @@ import (
 	"strings"
 )
 
+/*
+Questions: tcpconn, okwithbody content type, do we need to make errors, interface ip, docker expose,
+files to send in
+*/
+
 // max number of routines allowed
 const maxRoutines = 10
 
 func main() {
 
 	args := os.Args[1:]
+
+	if len(args) == 0 {
+		fmt.Printf("please provide a port and an optional interface")
+		os.Exit(1)
+	}
 
 	// second argument is ip if it exists otherwise listens on all interfaces
 	var ip string
@@ -42,7 +52,7 @@ func main() {
 	}
 	fmt.Printf("Listening on host: %s, port: %s\n", host, port)
 
-	// Channel for limiting number of routines
+	// channel for limiting number of routines
 	ch := make(chan int, maxRoutines)
 
 	// connections
@@ -133,7 +143,7 @@ func handlePostRequest(rq *http.Request) error {
 		return handlePostRequestMultiForm(rq, fn)
 	}
 
-	// if there is a valid destination url
+	// if there is a valid destination in url
 	if fn != "" {
 		if err := saveToFile(rq.Body, fn); err != nil {
 			return err
@@ -156,10 +166,11 @@ func handlePostRequest(rq *http.Request) error {
 func handlePostRequestMultiForm(rq *http.Request, fname string) error {
 	rq.ParseMultipartForm(10 << 20)
 
-	//gives http: no such file when "file" key not used in request
-	//maybe give more explicit error?
 	fi, hd, err := rq.FormFile("file")
 	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
+			return fmt.Errorf("No such file, the file field name must be called \"file\"")
+		}
 		return err
 	}
 	defer fi.Close()
@@ -168,6 +179,7 @@ func handlePostRequestMultiForm(rq *http.Request, fname string) error {
 		return err
 	}
 
+	// url path is prioritized over the name of the original file sent
 	var fn string
 	if fname != "" {
 		fn = fname
@@ -184,13 +196,21 @@ func handlePostRequestMultiForm(rq *http.Request, fname string) error {
 
 func getURLFileName(rq *http.Request) (string, error) {
 	fn, _ := strings.CutPrefix(rq.URL.Path, "/")
+
+	// no file name in url
 	if fn == "" {
 		return "", nil
 	}
+
+	// prevent user from accessing other directories
+	n := strings.Count(fn, "/")
+	// only one extension
 	ex := strings.Split(fn, ".")
-	if len(ex) != 2 {
+
+	if n > 0 || len(ex) != 2 {
 		return "", fmt.Errorf("invalid URL")
 	}
+	// check if extension is allowed
 	if err := checkExtension(ex[1]); err != nil {
 		return "", err
 	}
