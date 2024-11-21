@@ -12,11 +12,6 @@ import (
 	"strings"
 )
 
-/*
-Questions: tcpconn, okwithbody content type, do we need to make errors, interface ip, docker expose,
-files to send in
-*/
-
 // max number of routines allowed
 const maxRoutines = 10
 
@@ -91,7 +86,7 @@ func parseRequest(cn net.Conn) {
 
 	switch md {
 	case "GET":
-		bd, err := handleGetRequest(rq)
+		bd, ct, err := handleGetRequest(rq)
 
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -101,7 +96,7 @@ func parseRequest(cn net.Conn) {
 			SendBadRequestResponse(cn, err.Error())
 			return
 		}
-		SendOkResponseWithBody(cn, bd)
+		SendOkResponseWithBody(cn, bd, ct)
 
 	case "POST":
 		if err := handlePostRequest(rq); err != nil {
@@ -118,18 +113,21 @@ func parseRequest(cn net.Conn) {
 	}
 }
 
-func handleGetRequest(rq *http.Request) ([]byte, error) {
+func handleGetRequest(rq *http.Request) ([]byte, string, error) {
 	fn, err := getURLFileName(rq)
+
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	ex := strings.Split(fn, ".")
+	ct := getContentType(ex[1])
 
 	bd, err := os.ReadFile(fn)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return bd, nil
+	return bd, ct, nil
 }
 
 func handlePostRequest(rq *http.Request) error {
@@ -245,4 +243,22 @@ func saveToFile(bd io.ReadCloser, fn string) error {
 		return err
 	}
 	return nil
+}
+func getContentType(ext string) string {
+	switch ext {
+	case "html":
+		return "text/html"
+	case "txt":
+		return "text/plain"
+	case "gif":
+		return "image/gif"
+	case "jpeg":
+		return "image/jpeg"
+	case "jpg":
+		return "image/jpg"
+	case "css":
+		return "text/css"
+	default:
+		return ""
+	}
 }
